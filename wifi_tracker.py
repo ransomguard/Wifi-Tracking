@@ -1,4 +1,5 @@
-from scapy.all import sniff, Ether, IP, get_if_hwaddr
+import time
+from scapy.all import AsyncSniffer, Ether, IP, get_if_hwaddr
 import requests
 
 # 1. 대상 가상 어댑터 이름
@@ -18,8 +19,11 @@ try:
 except Exception:
     AP_BSSID = AP_BSSID_FALLBACK.lower() if AP_BSSID_FALLBACK else None
 
-# 이미 전송한 단말 MAC 저장 (중복 전송 방지)
-detected_devices = set()
+# 단말 관리
+seen_devices = set()      # 로컬에서 처음 감지된 단말 (콘솔 알림 중복 방지)
+sent_devices = set()      # 대시보드 서버 전송에 성공한 단말
+last_attempt = {}         # 최근 서버 전송 시도 시각 {mac: timestamp}
+RETRY_COOLDOWN = 30       # 전송 실패 시 재시도 대기 시간 (초)
 
 # 제외할 MAC (브로드캐스트, 멀티캐스트 시작 대역, AP 자신)
 IGNORE_MACS = {"ff:ff:ff:ff:ff:ff"}
@@ -33,11 +37,21 @@ def process_packet(packet):
 
     mac_addr = packet[Ether].src.lower()
 
-    # 제외 대상 / 이미 전송한 단말은 무시
-    if mac_addr in IGNORE_MACS or mac_addr in detected_devices:
+    # 제외 대상이거나 이미 대시보드 전송에 성공한 단말은 무시
+    if mac_addr in IGNORE_MACS or mac_addr in sent_devices:
         return
 
-    detected_devices.add(mac_addr)
+    now = time.time()
+    # 최근에 전송 시도 후 실패한 단말은 쿨다운 시간 동안 재시도 보류
+    if mac_addr in last_attempt and (now - last_attempt[mac_addr]) < RETRY_COOLDOWN:
+        return
+
+    # 처음 발견된 단말인 경우 1회만 콘솔에 감지 출력
+    if mac_addr not in seen_devices:
+        seen_devices.add(mac_addr)
+        print(f"[+] 새 단말 감지 | MAC: {mac_addr}")
+
+    last_attempt[mac_addr] = now
 
     payload = {
         "bssid": AP_BSSID,
@@ -47,15 +61,29 @@ def process_packet(packet):
 
     try:
         response = requests.post(DASHBOARD_API, json=payload, timeout=5)
-        print(f"[+] 새 단말 탐지 | MAC: {mac_addr} | 상태코드: {response.status_code}")
-        if response.status_code >= 400:
-            # 전송 실패 시 다음 패킷에서 재시도할 수 있도록 제거
-            detected_devices.discard(mac_addr)
-            print(f"    응답: {response.text}")
+        if 200 <= response.status_code < 300:
+            sent_devices.add(mac_addr)
+            print(f"    [OK] 대시보드 전송 성공 | MAC: {mac_addr} | 상태코드: {response.status_code}")
+        else:
+            print(f"    [-] 대시보드 전송 실패 | MAC: {mac_addr} | 상태코드: {response.status_code} ({RETRY_COOLDOWN}초 후 재시도)")
+            if response.text.strip():
+                print(f"        응답: {response.text.strip()}")
     except Exception as e:
-        detected_devices.discard(mac_addr)
-        print(f"[-] 대시보드 서버와 통신 실패: {e}")
+        print(f"    [-] 대시보드 통신 오류 | MAC: {mac_addr} | {e} ({RETRY_COOLDOWN}초 후 재시도)")
 
 
 print(f"[{TARGET_IFACE}] 접속 단말 탐지 시작 | SSID: {AP_SSID} | BSSID: {AP_BSSID}")
-sniff(iface=TARGET_IFACE, prn=process_packet, store=False)
+print("[*] 종료하려면 Ctrl+C를 누르세요.")
+
+sniffer = AsyncSniffer(iface=TARGET_IFACE, prn=process_packet, store=False)
+sniffer.start()
+
+try:
+    while sniffer.running:
+        time.sleep(0.5)
+except KeyboardInterrupt:
+    print("\n[!] 탐지를 중단합니다...")
+finally:
+    if sniffer.running:
+        sniffer.stop()
+    print("[*] 안전하게 종료되었습니다.")
