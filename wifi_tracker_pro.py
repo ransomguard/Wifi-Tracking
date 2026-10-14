@@ -6,8 +6,8 @@ import requests
 TARGET_IFACE = "로컬 영역 연결* 2"
 
 # 2. 대시보드 API
-DASHBOARD_API     = "https://sat-center.zuni.kim/api/v1/track/wifi"      # 최초 1회
-DASHBOARD_API_PRO = "https://sat-center.zuni.kim/api/v1/track/wifi-pro"  # 이후 갱신
+DASHBOARD_API     = "https://rguard.store/api/v1/track/wifi"      # 최초 1회
+DASHBOARD_API_PRO = "https://rguard.store/api/v1/track/wifi-pro"  # 이후 갱신
 
 # 3. 훈련용 AP 정보
 AP_SSID = "Ransom 0"

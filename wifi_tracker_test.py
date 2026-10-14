@@ -1,6 +1,6 @@
 import requests
 
-DASHBOARD_API = "https://sat-center.zuni.kim/api/v1/track/wifi"
+DASHBOARD_API = "https://rguard.store/api/v1/track/wifi"
 AP_SSID = "Ransom 0"
 
 # 테스트용 가짜 데이터 (단말 MAC)
